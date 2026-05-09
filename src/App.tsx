@@ -378,47 +378,47 @@ function Dashboard({ stats, data }: { stats: any, data: AppData }) {
 
   const stockChartData = useMemo(() => {
     return stats.productStocks.slice(0, 6).map((p: any) => ({
-      name: p.name,
+      name: p.name.substring(0, 10),
       stock: p.stock
     }));
   }, [stats.productStocks]);
 
   return (
-    <div className="grid gap-6">
+    <div className="grid gap-4 md:gap-6">
       {/* Stats Cards */}
-      <div className="grid gap-6 grid-cols-1 md:grid-cols-3">
+      <div className="grid gap-4 md:gap-6 grid-cols-1 md:grid-cols-3">
         <Card className="bg-white">
           <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-medium text-gray-500 uppercase tracking-widest">Master Balance</span>
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Master Balance</span>
             <div className="h-10 w-10 flex items-center justify-center rounded-full bg-[#EFF6FF] text-[#1D4ED8]">
               <Wallet size={20} />
             </div>
           </div>
-          <h3 className="text-3xl font-bold tracking-tight">{formatCurrency(stats.cashBalance)}</h3>
+          <h3 className="text-2xl md:text-3xl font-bold tracking-tight">{formatCurrency(stats.cashBalance)}</h3>
           <div className="mt-4 flex items-center gap-2 text-sm">
             <span className="flex items-center text-[#16A34A] font-medium bg-[#F0FDF4] px-2 py-1 rounded-full text-[10px]">
               <TrendingUp size={12} className="mr-1" /> ACTIVE
             </span>
-            <span className="text-gray-400">Current liquidity</span>
+            <span className="text-gray-400 text-xs">Liquidity</span>
           </div>
         </Card>
 
         <Card className="bg-white">
           <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-medium text-gray-500 uppercase tracking-widest">Inventory Health</span>
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Inventory Status</span>
             <div className="h-10 w-10 flex items-center justify-center rounded-full bg-[#FFFBEB] text-[#D97706]">
               <Package size={20} />
             </div>
           </div>
-          <h3 className="text-3xl font-bold tracking-tight">{stats.productStocks.length}</h3>
-          <div className="mt-4 flex items-center gap-2 text-sm">
-             <span className="text-gray-700 font-medium">SKUs tracked</span>
+          <h3 className="text-2xl md:text-3xl font-bold tracking-tight">{stats.productStocks.length}</h3>
+          <div className="mt-4 flex items-center gap-2">
+             <span className="text-gray-700 text-xs font-medium">Items Tracked</span>
           </div>
         </Card>
 
-        <Card className="bg-white overflow-hidden relative">
+        <Card className="bg-white overflow-hidden relative hidden md:block">
           <div className="flex items-center justify-between mb-4 relative z-10">
-            <span className="text-sm font-medium text-gray-500 uppercase tracking-widest">Recent Activity</span>
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Latest Activity</span>
             <div className="h-10 w-10 flex items-center justify-center rounded-full bg-[#F5F5F5] text-gray-500">
               <History size={20} />
             </div>
@@ -433,21 +433,18 @@ function Dashboard({ stats, data }: { stats: any, data: AppData }) {
               </div>
             ))}
           </div>
-          <div className="absolute -bottom-4 -right-4 opacity-5">
-             <ArrowLeftRight size={120} />
-          </div>
         </Card>
       </div>
 
       {/* Charts Row */}
-      <div className="grid gap-6 grid-cols-1 lg:grid-cols-2">
-        <Card title="Cash Flow Overview">
-          <div className="h-[300px] w-full">
+      <div className="grid gap-4 md:gap-6 grid-cols-1 lg:grid-cols-2">
+        <Card title="Revenue Trends">
+          <div className="h-[250px] md:h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E5E5" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 12, fill: '#9CA3AF'}} />
-                <YAxis axisLine={false} tickLine={false} tick={{fontSize: 12, fill: '#9CA3AF'}} />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F1F1" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#9CA3AF'}} />
+                <YAxis hide={window.innerWidth < 640} axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#9CA3AF'}} />
                 <Tooltip 
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
                   formatter={(value: number) => [formatCurrency(value), 'Balance']}
@@ -456,22 +453,21 @@ function Dashboard({ stats, data }: { stats: any, data: AppData }) {
                   type="monotone" 
                   dataKey="balance" 
                   stroke="#1E40AF" 
-                  strokeWidth={4} 
-                  dot={{ r: 4, fill: '#1E40AF', strokeWidth: 2, stroke: '#fff' }}
-                  activeDot={{ r: 6, strokeWidth: 0 }}
+                  strokeWidth={3} 
+                  dot={{ r: 3, fill: '#1E40AF', strokeWidth: 2, stroke: '#fff' }}
                 />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </Card>
 
-        <Card title="Primary Stock Levels">
-          <div className="h-[300px] w-full">
+        <Card title="Stock Distribution">
+          <div className="h-[250px] md:h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={stockChartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E5E5" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 11, fill: '#9CA3AF'}} />
-                <YAxis axisLine={false} tickLine={false} tick={{fontSize: 12, fill: '#9CA3AF'}} />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F1F1" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 9, fill: '#9CA3AF'}} />
+                <YAxis hide={window.innerWidth < 640} axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#9CA3AF'}} />
                 <Tooltip 
                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
                 />
@@ -484,6 +480,12 @@ function Dashboard({ stats, data }: { stats: any, data: AppData }) {
             </ResponsiveContainer>
           </div>
         </Card>
+      </div>
+
+      {/* Footer Branding (Mobile) */}
+      <div className="lg:hidden mt-4 pb-8 text-center">
+         <p className="text-[10px] font-bold text-gray-300 uppercase tracking-[0.2em]">Designed & Developed by</p>
+         <p className="text-sm font-bold text-gray-400 mt-1">Deepjyoti Roy</p>
       </div>
     </div>
   );
