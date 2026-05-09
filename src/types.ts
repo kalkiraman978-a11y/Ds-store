@@ -7,6 +7,7 @@ export interface Product {
 export type InventoryType = "IN" | "OUT";
 
 export interface InventoryTransaction {
+  id: string; // Added for editing support
   pid: string;
   type: InventoryType;
   qty: number;

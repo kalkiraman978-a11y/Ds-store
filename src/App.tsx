@@ -48,15 +48,23 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [apiUrl, setApiUrl] = useState(localStorage.getItem("cloud_api_url") || DEFAULT_API_URL);
   const [showApiSettings, setShowApiSettings] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [password, setPassword] = useState("");
 
   // Local State
   const [data, setData] = useState<AppData>(() => {
     const saved = localStorage.getItem("inventory_app_data");
-    return saved ? JSON.parse(saved) : { 
+    const defaultData = { 
       products: [], 
       transactions: [], 
       cashTransactions: [] 
     };
+    if (!saved) return defaultData;
+    try {
+      return JSON.parse(saved);
+    } catch {
+      return defaultData;
+    }
   });
 
   // Sync with Cloud
@@ -66,13 +74,13 @@ export default function App() {
     try {
       const response = await fetch(apiUrl);
       const cloudData = await response.json();
-      const newData = {
+      
+      setData(prev => ({
+        ...prev,
         products: cloudData.products || [],
         transactions: cloudData.transactions || [],
-        cashTransactions: cloudData.cashTransactions || data.cashTransactions // Keep local cash if not in cloud
-      };
-      setData(newData);
-      localStorage.setItem("inventory_app_data", JSON.stringify(newData));
+        // Cash transactions are local-only as per request
+      }));
     } catch (error) {
       console.error("Sync failed:", error);
     } finally {
@@ -85,6 +93,11 @@ export default function App() {
   }, [data]);
 
   const sendToCloud = async (payload: any) => {
+    // Only send non-cash actions to cloud
+    if (payload.action === "ADD_CASH" || payload.action === "EDIT_CASH" || payload.action === "DELETE_CASH") {
+      return; 
+    }
+
     if (!apiUrl) return;
     setLoading(true);
     try {
@@ -93,8 +106,7 @@ export default function App() {
         mode: "no-cors",
         body: JSON.stringify(payload)
       });
-      // Refresh after a delay since no-cors doesn't give us status
-      setTimeout(syncData, 1500);
+      setTimeout(syncData, 1000);
     } catch (error) {
       console.error("Cloud update failed:", error);
       setLoading(false);
@@ -122,31 +134,92 @@ export default function App() {
   // Actions
   const handleAddProduct = (name: string, cat: string) => {
     const newProd = { id: Date.now().toString(), name, cat };
-    const newData = { ...data, products: [...data.products, newProd] };
-    setData(newData);
+    setData(prev => ({ ...prev, products: [...prev.products, newProd] }));
     sendToCloud({ action: "ADD_PRODUCT", ...newProd });
   };
 
-  const handleAddInventory = (pid: string, type: "IN" | "OUT", qty: number, person: string) => {
-    const newTrans = { pid, type, qty, person, date: new Date().toLocaleString() };
-    const newData = { ...data, transactions: [...data.transactions, newTrans] };
-    setData(newData);
+  const handleAddInventory = (pid: string, type: "IN" | "OUT", qty: number, person: string, date: string) => {
+    const newTrans = { id: Date.now().toString(), pid, type, qty, person, date: date || new Date().toLocaleString() };
+    setData(prev => ({ ...prev, transactions: [...prev.transactions, newTrans] }));
     sendToCloud({ action: "ADD_TRANS", ...newTrans });
   };
 
-  const handleAddCash = (amount: number, type: "INCOME" | "EXPENSE", note: string) => {
-    const newTrans = { id: Date.now().toString(), amount, type, note, date: new Date().toISOString() };
-    const newData = { ...data, cashTransactions: [...data.cashTransactions, newTrans] };
-    setData(newData);
-    // Cloud support for cash can be added to the script too
-    sendToCloud({ action: "ADD_CASH", ...newTrans });
+  const handleEditInventory = (updatedTrans: InventoryTransaction) => {
+    setData(prev => ({
+      ...prev,
+      transactions: prev.transactions.map(t => t.id === updatedTrans.id ? updatedTrans : t)
+    }));
+    sendToCloud({ action: "EDIT_TRANS", ...updatedTrans });
   };
 
+  const handleDeleteInventory = (id: string) => {
+    setData(prev => ({
+      ...prev,
+      transactions: prev.transactions.filter(t => t.id !== id)
+    }));
+    sendToCloud({ action: "DELETE_TRANS", id });
+  };
+
+  const handleAddCash = (amount: number, type: "INCOME" | "EXPENSE", note: string, date: string) => {
+    const newTrans = { id: Date.now().toString(), amount, type, note, date: date || new Date().toISOString() };
+    setData(prev => ({ ...prev, cashTransactions: [...prev.cashTransactions, newTrans] }));
+    // No cloud send for cash as requested
+  };
+
+  const handleEditCash = (updatedTrans: CashTransaction) => {
+    setData(prev => ({
+      ...prev,
+      cashTransactions: prev.cashTransactions.map(t => t.id === updatedTrans.id ? updatedTrans : t)
+    }));
+  };
+
+  const handleDeleteCash = (id: string) => {
+    setData(prev => ({
+      ...prev,
+      cashTransactions: prev.cashTransactions.filter(t => t.id !== id)
+    }));
+  };
+
+  const secureTabs = ["accounts", "inventory", "products"];
+
   const renderContent = () => {
+    if (secureTabs.includes(activeTab) && !isAuthenticated) {
+      return (
+        <Card className="max-w-md mx-auto mt-20">
+          <div className="flex flex-col items-center gap-6 p-4">
+             <div className="p-4 rounded-full bg-blue-50 text-blue-600">
+                <Settings size={32} />
+             </div>
+             <div className="text-center">
+                <h3 className="text-xl font-bold">Authenticated Access Only</h3>
+                <p className="text-sm text-gray-500 mt-2">Please enter the security password to manage data.</p>
+             </div>
+             <input 
+               type="password"
+               value={password}
+               onChange={(e) => setPassword(e.target.value)}
+               onKeyDown={(e) => e.key === 'Enter' && password === '123456' && setIsAuthenticated(true)}
+               placeholder="Enter Password"
+               className="w-full rounded-xl border-gray-200 text-center p-3 focus:ring-[#1E40AF]"
+             />
+             <button 
+               onClick={() => {
+                 if(password === "123456") setIsAuthenticated(true);
+                 else alert("Incorrect Password");
+               }}
+               className="w-full rounded-xl bg-[#1E40AF] p-4 text-sm font-bold text-white shadow-lg"
+             >
+               Unlock Section
+             </button>
+          </div>
+        </Card>
+      );
+    }
+
     switch (activeTab) {
       case "dashboard": return <Dashboard stats={stats} data={data} />;
-      case "accounts": return <AccountsView transactions={data.cashTransactions} balance={stats.cashBalance} onAdd={handleAddCash} />;
-      case "inventory": return <InventoryView products={stats.productStocks} transactions={data.transactions} onAdd={handleAddInventory} />;
+      case "accounts": return <AccountsView transactions={data.cashTransactions} balance={stats.cashBalance} onAdd={handleAddCash} onEdit={handleEditCash} onDelete={handleDeleteCash} />;
+      case "inventory": return <InventoryView products={stats.productStocks} transactions={data.transactions} onAdd={handleAddInventory} onEdit={handleEditInventory} onDelete={handleDeleteInventory} />;
       case "products": return <ProductSetup products={data.products} onAdd={handleAddProduct} />;
       default: return <Dashboard stats={stats} data={data} />;
     }
@@ -356,18 +429,37 @@ function MobileNavItem({ icon, active, onClick, className }: { icon: React.React
 // --- VIEWS ---
 
 function Dashboard({ stats, data }: { stats: any, data: AppData }) {
+  const [viewState, setViewState] = useState<{ type: 'overview' | 'category' | 'product', id: string }>({ type: 'overview', id: '' });
+
+  const categories = useMemo(() => {
+    const cats = new Set(data.products.map(p => p.cat));
+    return Array.from(cats);
+  }, [data.products]);
+
+  const filteredInCategories = useMemo(() => {
+    if (viewState.type !== 'category') return [];
+    return stats.productStocks.filter((p: any) => p.cat === viewState.id);
+  }, [viewState, stats.productStocks]);
+
+  const productHistory = useMemo(() => {
+    if (viewState.type !== 'product') return [];
+    return data.transactions.filter(t => t.pid === viewState.id).reverse();
+  }, [viewState, data.transactions]);
+
+  const selectedProduct = useMemo(() => {
+    if (viewState.type !== 'product') return null;
+    return stats.productStocks.find((p: any) => p.id === viewState.id);
+  }, [viewState, stats.productStocks]);
+
   const chartData = useMemo(() => {
-    // Last 7 days balance history helper
     const result = [];
     for(let i = 6; i >= 0; i--) {
       const date = new Date();
       date.setDate(date.getDate() - i);
       const dateStr = date.toISOString().split('T')[0];
-      
       const dayEndBalance = data.cashTransactions
         .filter(t => t.date.split('T')[0] <= dateStr)
         .reduce((acc, t) => t.type === 'INCOME' ? acc + t.amount : acc - t.amount, 0);
-      
       result.push({
         name: date.toLocaleDateString('en-US', { weekday: 'short' }),
         balance: dayEndBalance
@@ -385,7 +477,7 @@ function Dashboard({ stats, data }: { stats: any, data: AppData }) {
 
   return (
     <div className="grid gap-4 md:gap-6">
-      {/* Stats Cards */}
+      {/* Overview Cards */}
       <div className="grid gap-4 md:gap-6 grid-cols-1 md:grid-cols-3">
         <Card className="bg-white">
           <div className="flex items-center justify-between mb-4">
@@ -395,15 +487,13 @@ function Dashboard({ stats, data }: { stats: any, data: AppData }) {
             </div>
           </div>
           <h3 className="text-2xl md:text-3xl font-bold tracking-tight">{formatCurrency(stats.cashBalance)}</h3>
-          <div className="mt-4 flex items-center gap-2 text-sm">
-            <span className="flex items-center text-[#16A34A] font-medium bg-[#F0FDF4] px-2 py-1 rounded-full text-[10px]">
-              <TrendingUp size={12} className="mr-1" /> ACTIVE
-            </span>
-            <span className="text-gray-400 text-xs">Liquidity</span>
+          <div className="mt-4 flex items-center gap-2 text-sm text-gray-500">
+             <TrendingUp size={14} className="text-[#16A34A]" /> Liquidity Available
           </div>
         </Card>
 
-        <Card className="bg-white">
+        {/* Drill-down Inventory Card */}
+        <Card className="bg-white group cursor-pointer" onClick={() => setViewState({ type: 'overview', id: '' })}>
           <div className="flex items-center justify-between mb-4">
             <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Inventory Status</span>
             <div className="h-10 w-10 flex items-center justify-center rounded-full bg-[#FFFBEB] text-[#D97706]">
@@ -411,95 +501,167 @@ function Dashboard({ stats, data }: { stats: any, data: AppData }) {
             </div>
           </div>
           <h3 className="text-2xl md:text-3xl font-bold tracking-tight">{stats.productStocks.length}</h3>
-          <div className="mt-4 flex items-center gap-2">
-             <span className="text-gray-700 text-xs font-medium">Items Tracked</span>
+          <div className="mt-4 flex items-center gap-2 text-xs font-medium text-[#D97706]">
+             Click to Reset Drill-down
           </div>
         </Card>
 
-        <Card className="bg-white overflow-hidden relative hidden md:block">
-          <div className="flex items-center justify-between mb-4 relative z-10">
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Latest Activity</span>
-            <div className="h-10 w-10 flex items-center justify-center rounded-full bg-[#F5F5F5] text-gray-500">
-              <History size={20} />
-            </div>
-          </div>
-          <div className="space-y-3 relative z-10">
-            {stats.recentActivity.slice(0, 3).map((t: any, i: number) => (
-              <div key={i} className="flex items-center justify-between text-sm">
-                <span className="text-gray-600 truncate mr-2">{data.products.find(p => p.id === t.pid)?.name || 'Unknown'}</span>
-                <span className={cn("font-bold", t.type === 'IN' ? 'text-[#16A34A]' : 'text-red-500')}>
-                  {t.type === 'IN' ? '+' : '-'}{t.qty}
-                </span>
+        <Card className="bg-white hidden md:block border-none bg-gradient-to-br from-[#1E40AF] to-[#1D4ED8] text-white">
+           <div className="flex flex-col h-full justify-between">
+              <div>
+                 <p className="text-[10px] font-bold opacity-60 uppercase tracking-widest">Business Health</p>
+                 <p className="text-sm mt-1">Status: Operational</p>
               </div>
-            ))}
-          </div>
+              <div className="flex items-end justify-between">
+                 <div className="text-2xl font-bold">100%</div>
+                 <div className="text-[10px] opacity-40">AUTO-SYNC ACTIVE</div>
+              </div>
+           </div>
         </Card>
       </div>
 
-      {/* Charts Row */}
-      <div className="grid gap-4 md:gap-6 grid-cols-1 lg:grid-cols-2">
-        <Card title="Revenue Trends">
-          <div className="h-[250px] md:h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F1F1" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#9CA3AF'}} />
-                <YAxis hide={window.innerWidth < 640} axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#9CA3AF'}} />
-                <Tooltip 
-                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                  formatter={(value: number) => [formatCurrency(value), 'Balance']}
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="balance" 
-                  stroke="#1E40AF" 
-                  strokeWidth={3} 
-                  dot={{ r: 3, fill: '#1E40AF', strokeWidth: 2, stroke: '#fff' }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-
-        <Card title="Stock Distribution">
-          <div className="h-[250px] md:h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={stockChartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F1F1" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 9, fill: '#9CA3AF'}} />
-                <YAxis hide={window.innerWidth < 640} axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#9CA3AF'}} />
-                <Tooltip 
-                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                />
-                <Bar dataKey="stock" radius={[4, 4, 0, 0]}>
-                  {stockChartData.map((_entry: any, index: number) => (
-                    <Cell key={`cell-${index}`} fill={['#1E40AF', '#3B82F6', '#60A5FA', '#93C5FD'][index % 4]} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-      </div>
-
-      {/* Footer Branding (Mobile) */}
-      <div className="lg:hidden mt-4 pb-8 text-center">
-         <p className="text-[10px] font-bold text-gray-300 uppercase tracking-[0.2em]">Designed & Developed by</p>
-         <p className="text-sm font-bold text-gray-400 mt-1">Deepjyoti Roy</p>
+      {/* Drill-down Display Area */}
+      <div className="grid gap-6 grid-cols-1 lg:grid-cols-3">
+         <div className="lg:col-span-2">
+            <Card title={viewState.type === 'overview' ? "Select Category" : viewState.type === 'category' ? `Products in ${viewState.id}` : `History: ${selectedProduct?.name}`}>
+               <div className="min-h-[300px]">
+                  <AnimatePresence mode="wait">
+                     {viewState.type === 'overview' && (
+                        <motion.div key="overview" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                           {categories.map(cat => (
+                              <button 
+                                key={cat} 
+                                onClick={() => setViewState({ type: 'category', id: cat })}
+                                className="flex items-center justify-between p-4 rounded-xl border border-gray-100 bg-gray-50 hover:bg-white hover:shadow-md transition-all group"
+                              >
+                                 <span className="font-bold text-gray-700">{cat}</span>
+                                 <ChevronRight size={18} className="text-gray-300 group-hover:text-blue-600 transform group-hover:translate-x-1 transition-all" />
+                              </button>
+                           ))}
+                        </motion.div>
+                     )}
+                     {viewState.type === 'category' && (
+                        <motion.div key="category" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-2">
+                           <button onClick={() => setViewState({ type: 'overview', id: '' })} className="text-xs font-bold text-blue-600 mb-4 block underline">← Back to Categories</button>
+                           {filteredInCategories.map((p: any) => (
+                              <button 
+                                key={p.id} 
+                                onClick={() => setViewState({ type: 'product', id: p.id })}
+                                className="w-full flex items-center justify-between p-4 rounded-xl border border-gray-50 bg-white hover:bg-blue-50 transition-all"
+                              >
+                                 <div className="text-left">
+                                    <div className="font-bold text-gray-900">{p.name}</div>
+                                    <div className="text-[10px] text-gray-400">ID: {p.id}</div>
+                                 </div>
+                                 <div className="text-right">
+                                    <div className="text-lg font-mono font-bold text-blue-700">{p.stock}</div>
+                                    <div className="text-[10px] text-gray-400">AVAILABLE</div>
+                                 </div>
+                              </button>
+                           ))}
+                        </motion.div>
+                     )}
+                     {viewState.type === 'product' && selectedProduct && (
+                        <motion.div key="product" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-4">
+                           <button onClick={() => setViewState({ type: 'category', id: selectedProduct.cat })} className="text-xs font-bold text-blue-600 mb-2 block underline">← Back to Products</button>
+                           <div className="relative overflow-x-auto rounded-xl border border-gray-100">
+                              <table className="w-full text-sm">
+                                 <thead className="bg-gray-50 text-[10px] uppercase font-bold text-gray-400">
+                                    <tr>
+                                       <th className="px-4 py-3 text-left">Date</th>
+                                       <th className="px-4 py-3 text-center">Type</th>
+                                       <th className="px-4 py-3 text-right">Qty</th>
+                                       <th className="px-4 py-3 text-left">Person</th>
+                                    </tr>
+                                 </thead>
+                                 <tbody className="divide-y divide-gray-50">
+                                    {productHistory.map((t, i) => (
+                                       <tr key={i} className="hover:bg-gray-50">
+                                          <td className="px-4 py-3 text-[11px] font-medium">{t.date}</td>
+                                          <td className="px-4 py-3 text-center">
+                                             <span className={cn("px-2 py-0.5 rounded-full text-[9px] font-bold", t.type === 'IN' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600')}>
+                                                {t.type}
+                                             </span>
+                                          </td>
+                                          <td className={cn("px-4 py-3 text-right font-mono font-bold", t.type === 'IN' ? 'text-green-600' : 'text-red-600')}>
+                                             {t.type === 'IN' ? '+' : '-'}{t.qty}
+                                          </td>
+                                          <td className="px-4 py-3 text-gray-500 italic">{t.person}</td>
+                                       </tr>
+                                    ))}
+                                 </tbody>
+                              </table>
+                           </div>
+                        </motion.div>
+                     )}
+                  </AnimatePresence>
+               </div>
+            </Card>
+         </div>
+         <div className="space-y-6">
+            <Card title="Revenue Trends">
+               <div className="h-[200px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                     <LineChart data={chartData}>
+                        <Line type="monotone" dataKey="balance" stroke="#1E40AF" strokeWidth={3} dot={false} />
+                     </LineChart>
+                  </ResponsiveContainer>
+               </div>
+            </Card>
+            <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+               <div className="flex items-center gap-4">
+                  <div className="h-12 w-12 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center">
+                     <Settings size={20} />
+                  </div>
+                  <div>
+                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Active Store</p>
+                     <p className="font-bold text-gray-900">DS Store Global</p>
+                  </div>
+               </div>
+            </div>
+         </div>
       </div>
     </div>
   );
 }
 
-function AccountsView({ transactions, balance, onAdd }: { transactions: CashTransaction[], balance: number, onAdd: (amount: number, type: "INCOME" | "EXPENSE", note: string) => void }) {
+function AccountsView({ 
+  transactions, 
+  balance, 
+  onAdd, 
+  onEdit, 
+  onDelete 
+}: { 
+  transactions: CashTransaction[], 
+  balance: number, 
+  onAdd: (amount: number, type: "INCOME" | "EXPENSE", note: string, date: string) => void,
+  onEdit: (updated: CashTransaction) => void,
+  onDelete: (id: string) => void
+}) {
   const [amount, setAmount] = useState("");
   const [type, setType] = useState<"INCOME" | "EXPENSE">("INCOME");
   const [note, setNote] = useState("");
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const startEdit = (t: CashTransaction) => {
+    setEditingId(t.id);
+    setAmount(t.amount.toString());
+    setType(t.type);
+    setNote(t.note);
+    setDate(t.date.split('T')[0]);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setAmount("");
+    setNote("");
+  };
 
   return (
     <div className="grid gap-8 grid-cols-1 lg:grid-cols-3">
       <div className="lg:col-span-2 space-y-6">
-        <Card title="Cash Ledger">
+        <Card title="Local Cash Ledger">
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -507,6 +669,7 @@ function AccountsView({ transactions, balance, onAdd }: { transactions: CashTran
                   <th className="px-4 py-4 text-left font-normal">Date</th>
                   <th className="px-4 py-4 text-left font-normal">Details</th>
                   <th className="px-4 py-4 text-right font-normal">Amount</th>
+                  <th className="px-4 py-4 text-right font-normal">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -514,16 +677,25 @@ function AccountsView({ transactions, balance, onAdd }: { transactions: CashTran
                   <tr key={t.id} className="group hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-4">
                       <div className="text-sm font-medium">{new Date(t.date).toLocaleDateString()}</div>
-                      <div className="text-[10px] text-gray-400">{new Date(t.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                     </td>
                     <td className="px-4 py-4">
                       <div className="text-sm font-semibold">{t.note}</div>
-                      <div className={cn("text-[10px] font-bold uppercase", t.type === 'INCOME' ? 'text-[#16A34A]' : 'text-red-500')}>
+                      <div className={cn("text-[9px] font-bold uppercase", t.type === 'INCOME' ? 'text-[#16A34A]' : 'text-red-500')}>
                         {t.type}
                       </div>
                     </td>
                     <td className={cn("px-4 py-4 text-right font-mono font-bold text-sm", t.type === 'INCOME' ? 'text-[#16A34A]' : 'text-red-500')}>
                       {t.type === 'INCOME' ? '+' : '-'}{formatCurrency(t.amount)}
+                    </td>
+                    <td className="px-4 py-4 text-right">
+                       <div className="flex items-center justify-end gap-2">
+                          <button onClick={() => startEdit(t)} className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
+                             <Settings size={14} />
+                          </button>
+                          <button onClick={() => onDelete(t.id)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg">
+                             <TrendingDown size={14} />
+                          </button>
+                       </div>
                     </td>
                   </tr>
                 ))}
@@ -534,21 +706,31 @@ function AccountsView({ transactions, balance, onAdd }: { transactions: CashTran
       </div>
 
       <div className="space-y-6">
-        <Card title="Quick Transaction">
+        <Card title={editingId ? "Edit Transaction" : "Quick Entry"}>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg">
               <button 
                 onClick={() => setType("INCOME")}
                 className={cn("flex items-center justify-center gap-2 rounded-md py-2 text-sm font-semibold transition-all", type === 'INCOME' ? 'bg-white text-[#16A34A] shadow-sm' : 'text-gray-500')}
               >
-                <TrendingUp size={16} /> Income
+                Income
               </button>
               <button 
                 onClick={() => setType("EXPENSE")}
                 className={cn("flex items-center justify-center gap-2 rounded-md py-2 text-sm font-semibold transition-all", type === 'EXPENSE' ? 'bg-white text-red-500 shadow-sm' : 'text-gray-500')}
               >
-                <TrendingDown size={16} /> Expense
+                Expense
               </button>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Date</label>
+              <input 
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="w-full rounded-xl border-gray-200 bg-gray-50 p-3 text-sm focus:bg-white"
+              />
             </div>
 
             <div>
@@ -557,141 +739,121 @@ function AccountsView({ transactions, balance, onAdd }: { transactions: CashTran
                 type="number" 
                 value={amount} 
                 onChange={(e) => setAmount(e.target.value)}
-                className="w-full rounded-xl border-gray-200 bg-gray-50 focus:bg-white transition-all focus:ring-[#1E40AF]" 
+                className="w-full rounded-xl border-gray-200 bg-gray-50 p-3 text-sm focus:bg-white" 
                 placeholder="0.00"
               />
             </div>
 
             <div>
-              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Note / Description</label>
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Note</label>
               <input 
                 type="text" 
                 value={note} 
                 onChange={(e) => setNote(e.target.value)}
-                className="w-full rounded-xl border-gray-200 bg-gray-50 focus:bg-white transition-all focus:ring-[#1E40AF]" 
-                placeholder="What is this for?"
+                className="w-full rounded-xl border-gray-200 bg-gray-50 p-3 text-sm focus:bg-white" 
+                placeholder="Description"
               />
             </div>
 
-            <button 
-              onClick={() => {
-                const val = parseFloat(amount);
-                if (val > 0 && note) {
-                  onAdd(val, type, note);
-                  setAmount("");
-                  setNote("");
-                }
-              }}
-              className={cn(
-                "w-full rounded-xl p-4 text-sm font-bold text-white shadow-lg transition-all active:scale-95",
-                type === 'INCOME' ? 'bg-[#16A34A] shadow-[#16A34A]/20 hover:bg-[#15803D]' : 'bg-red-500 shadow-red-500/20 hover:bg-red-600'
-              )}
-            >
-              Confirm Transaction
-            </button>
+            <div className="flex gap-2">
+               {editingId && (
+                 <button onClick={cancelEdit} className="flex-1 rounded-xl bg-gray-200 p-3 text-sm font-bold">Cancel</button>
+               )}
+               <button 
+                onClick={() => {
+                  const val = parseFloat(amount);
+                  if (val > 0 && note) {
+                    if (editingId) {
+                      onEdit({ id: editingId, amount: val, type, note, date: new Date(date).toISOString() });
+                      setEditingId(null);
+                    } else {
+                      onAdd(val, type, note, new Date(date).toISOString());
+                    }
+                    setAmount("");
+                    setNote("");
+                  }
+                }}
+                className={cn(
+                  "flex-[2] rounded-xl p-3 text-sm font-bold text-white shadow-lg",
+                  type === 'INCOME' ? 'bg-[#16A34A]' : 'bg-red-500'
+                )}
+               >
+                 {editingId ? "Update Item" : "Save Entry"}
+               </button>
+            </div>
           </div>
-        </Card>
-
-        <Card className="bg-[#1E40AF] text-white border-none shadow-xl shadow-[#1E40AF]/20">
-           <span className="text-[10px] font-bold opacity-60 uppercase tracking-widest">Total Liquidity</span>
-           <h4 className="text-3xl font-bold mt-1">{formatCurrency(balance)}</h4>
-           <p className="text-[10px] mt-4 opacity-50 italic">Calculated from all INCOME and EXPENSE entries recorded.</p>
         </Card>
       </div>
     </div>
   );
 }
 
-function InventoryView({ products, transactions, onAdd }: { products: any[], transactions: InventoryTransaction[], onAdd: (pid: string, type: "IN" | "OUT", qty: number, person: string) => void }) {
-  const [pid, setPid] = useState(products[0]?.id || "");
+function InventoryView({ 
+  products, 
+  transactions, 
+  onAdd, 
+  onEdit, 
+  onDelete 
+}: { 
+  products: any[], 
+  transactions: InventoryTransaction[], 
+  onAdd: (pid: string, type: "IN" | "OUT", qty: number, person: string, date: string) => void,
+  onEdit: (updated: InventoryTransaction) => void,
+  onDelete: (id: string) => void
+}) {
+  const [pid, setPid] = useState("");
   const [type, setType] = useState<"IN" | "OUT">("IN");
   const [qty, setQty] = useState("");
   const [person, setPerson] = useState("");
-  const [search, setSearch] = useState("");
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
-  const filteredProducts = products.filter(p => 
-    p.name.toLowerCase().includes(search.toLowerCase()) || 
-    p.cat.toLowerCase().includes(search.toLowerCase())
-  );
+  const startEdit = (t: InventoryTransaction) => {
+    setEditingId(t.id);
+    setPid(t.pid);
+    setType(t.type);
+    setQty(t.qty.toString());
+    setPerson(t.person);
+    // Try to normalize date from "toLocaleString" format or ISO
+    setDate(new Date(t.date).toISOString().split('T')[0]);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setQty("");
+    setPerson("");
+  };
 
   return (
     <div className="grid gap-8 grid-cols-1 lg:grid-cols-4">
-      {/* Search & List */}
       <div className="lg:col-span-3 space-y-6">
-        <div className="flex flex-col sm:flex-row gap-4 items-center">
-           <div className="relative flex-1 group">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-[#1E40AF] transition-colors" size={18} />
-              <input 
-                type="text" 
-                placeholder="Filter stock by name or category..." 
-                className="w-full rounded-2xl border-gray-100 bg-white pl-12 pr-4 py-4 text-sm shadow-sm focus:ring-[#1E40AF] transition-all"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-           </div>
-        </div>
-
-        <Card title="Current Stock Levels">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-100 italic text-[11px] text-gray-400 uppercase tracking-widest">
-                  <th className="px-6 py-4 text-left font-normal">Product Spec</th>
-                  <th className="px-6 py-4 text-center font-normal">Status</th>
-                  <th className="px-6 py-4 text-right font-normal">Available</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {filteredProducts.map((p) => (
-                  <tr key={p.id} className="group hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => setPid(p.id)}>
-                    <td className="px-6 py-5">
-                      <div className="flex items-center gap-3">
-                         <div className="h-10 w-10 flex items-center justify-center rounded-xl bg-gray-50 text-gray-400 group-hover:bg-[#EFF6FF] group-hover:text-[#1E40AF] transition-colors">
-                            <Package size={20} />
-                         </div>
-                         <div>
-                            <div className="font-bold text-gray-900">{p.name}</div>
-                            <div className="text-[10px] text-gray-400 uppercase tracking-wider">{p.cat}</div>
-                         </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-5 text-center">
-                       {p.stock > 10 ? (
-                         <span className="inline-flex items-center rounded-full bg-[#F0FDF4] px-2.5 py-0.5 text-xs font-semibold text-[#16A34A]">In Stock</span>
-                       ) : p.stock > 0 ? (
-                         <span className="inline-flex items-center rounded-full bg-[#FFFBEB] px-2.5 py-0.5 text-xs font-semibold text-[#D97706]">Low Stock</span>
-                       ) : (
-                         <span className="inline-flex items-center rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-500">Out of Stock</span>
-                       )}
-                    </td>
-                    <td className="px-6 py-5 text-right">
-                       <span className="text-xl font-mono font-bold">{p.stock}</span>
-                       <span className="text-[10px] text-gray-400 ml-1">units</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-
-        <Card title="Activity Timeline">
-           <div className="space-y-4">
-              {[...transactions].reverse().slice(0, 10).map((t, i) => {
+        <Card title="Cloud Movement Journal">
+           <div className="space-y-3">
+              {[...transactions].reverse().map((t) => {
                 const prod = products.find(p => p.id === t.pid);
                 return (
-                  <div key={i} className="flex items-center justify-between p-4 rounded-2xl bg-gray-50 border border-gray-100 hover:border-gray-200 transition-all">
-                     <div className="flex items-center gap-4">
-                        <div className={cn("h-10 w-10 rounded-full flex items-center justify-center", t.type === 'IN' ? 'bg-[#F0FDF4] text-[#16A34A]' : 'bg-red-50 text-red-500')}>
-                           {t.type === 'IN' ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
+                  <div key={t.id} className="flex items-center justify-between p-4 rounded-xl bg-gray-50 border border-transparent hover:border-gray-200 transition-all">
+                     <div className="flex items-center gap-4 flex-1">
+                        <div className={cn("h-8 w-8 rounded-full flex items-center justify-center text-[10px] font-bold", t.type === 'IN' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700')}>
+                           {t.type}
                         </div>
                         <div>
-                           <div className="text-sm font-bold text-gray-900">{prod?.name || 'Unknown'} <span className="font-normal text-gray-400">by {t.person}</span></div>
-                           <div className="text-[10px] text-gray-400">{t.date}</div>
+                           <div className="text-sm font-bold text-gray-900 leading-none">{prod?.name || 'Item Not Found'}</div>
+                           <div className="text-[10px] text-gray-400 mt-1 uppercase">{t.date}</div>
                         </div>
                      </div>
-                     <div className={cn("text-lg font-mono font-bold", t.type === 'IN' ? 'text-[#16A34A]' : 'text-red-500')}>
-                        {t.type === 'IN' ? '+' : '-'}{t.qty}
+                     <div className="flex items-center gap-6">
+                        <div className={cn("text-lg font-mono font-bold", t.type === 'IN' ? 'text-green-600' : 'text-red-600')}>
+                           {t.type === 'IN' ? '+' : '-'}{t.qty}
+                        </div>
+                        <div className="flex gap-2">
+                           <button onClick={() => startEdit(t)} className="p-1.5 text-gray-300 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
+                              <Settings size={14}/>
+                           </button>
+                           <button onClick={() => onDelete(t.id)} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg">
+                              <TrendingDown size={14}/>
+                           </button>
+                        </div>
                      </div>
                   </div>
                 );
@@ -700,76 +862,55 @@ function InventoryView({ products, transactions, onAdd }: { products: any[], tra
         </Card>
       </div>
 
-      {/* Movement Form */}
-      <div className="space-y-6">
-        <Card title="Movement Entry">
-          <div className="space-y-4">
-            <div>
-              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Direction</label>
+      <div>
+        <Card title={editingId ? "Edit Entry" : "New Entry"}>
+           <div className="space-y-4">
               <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg">
-                <button 
-                  onClick={() => setType("IN")}
-                  className={cn("flex items-center justify-center gap-2 rounded-md py-2 text-sm font-semibold transition-all", type === 'IN' ? 'bg-white text-[#16A34A] shadow-sm' : 'text-gray-500')}
-                >
-                  Inward (+)
-                </button>
-                <button 
-                  onClick={() => setType("OUT")}
-                  className={cn("flex items-center justify-center gap-2 rounded-md py-2 text-sm font-semibold transition-all", type === 'OUT' ? 'bg-white text-red-500 shadow-sm' : 'text-gray-500')}
-                >
-                  Outward (-)
-                </button>
+                 <button onClick={() => setType("IN")} className={cn("py-2 rounded-md text-xs font-bold", type==='IN'?'bg-white text-green-600 shadow-sm':'text-gray-400')}>STOCK IN</button>
+                 <button onClick={() => setType("OUT")} className={cn("py-2 rounded-md text-xs font-bold", type==='OUT'?'bg-white text-red-600 shadow-sm':'text-gray-400')}>STOCK OUT</button>
               </div>
-            </div>
-
-            <div>
-              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Select Product</label>
-              <select 
-                value={pid}
-                onChange={(e) => setPid(e.target.value)}
-                className="w-full rounded-xl border-gray-200 bg-gray-50 focus:bg-white transition-all focus:ring-[#1E40AF]"
-              >
-                <option value="" disabled>Choose an item...</option>
-                {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-            </div>
-
-            <div>
-              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Quantity</label>
-              <input 
-                type="number" 
-                value={qty} 
-                onChange={(e) => setQty(e.target.value)}
-                className="w-full rounded-xl border-gray-200 bg-gray-50 focus:bg-white transition-all focus:ring-[#1E40AF]" 
-                placeholder="0"
-              />
-            </div>
-
-            <div>
-              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Responsible Person</label>
-              <input 
-                type="text" 
-                value={person} 
-                onChange={(e) => setPerson(e.target.value)}
-                className="w-full rounded-xl border-gray-200 bg-gray-50 focus:bg-white transition-all focus:ring-[#1E40AF]" 
-                placeholder="Receiver / Issuer"
-              />
-            </div>
-
-            <button 
-              onClick={() => {
-                const q = parseInt(qty);
-                if (pid && q > 0 && person) {
-                  onAdd(pid, type, q, person);
-                  setQty("");
-                  setPerson("");
-                }
-              }}
-              className="w-full rounded-xl bg-[#1E40AF] p-4 text-sm font-bold text-white shadow-lg shadow-[#1E40AF]/20 hover:bg-[#1D4ED8] transition-all active:scale-95 flex items-center justify-center gap-2"
-            >
-              <ArrowLeftRight size={18} /> Update Stock
-            </button>
-          </div>
+              <div>
+                 <label className="text-[9px] font-bold text-gray-400 mb-1 block">DATE</label>
+                 <input type="date" value={date} onChange={e=>setDate(e.target.value)} className="w-full text-sm border-gray-200 rounded-lg bg-gray-50 focus:bg-white p-2" />
+              </div>
+              <div>
+                 <label className="text-[9px] font-bold text-gray-400 mb-1 block">PRODUCT</label>
+                 <select value={pid} onChange={e=>setPid(e.target.value)} className="w-full text-sm border-gray-200 rounded-lg bg-gray-50 p-2">
+                    <option value="">Select Item...</option>
+                    {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                 </select>
+              </div>
+              <div>
+                 <label className="text-[9px] font-bold text-gray-400 mb-1 block">QUANTITY</label>
+                 <input type="number" value={qty} onChange={e=>setQty(e.target.value)} className="w-full text-sm border-gray-200 rounded-lg p-2" placeholder="0" />
+              </div>
+              <div>
+                 <label className="text-[9px] font-bold text-gray-400 mb-1 block">PERSON</label>
+                 <input type="text" value={person} onChange={e=>setPerson(e.target.value)} className="w-full text-sm border-gray-200 rounded-lg p-2" placeholder="Name" />
+              </div>
+              <div className="flex gap-2">
+                 {editingId && <button onClick={cancelEdit} className="flex-1 bg-gray-100 p-3 rounded-lg text-xs font-bold">CANCEL</button>}
+                 <button 
+                  onClick={() => {
+                    const q = parseInt(qty);
+                    if (pid && q > 0 && person) {
+                      const finalDate = new Date(date).toLocaleString();
+                      if (editingId) {
+                        onEdit({ id: editingId, pid, type, qty: q, person, date: finalDate });
+                        setEditingId(null);
+                      } else {
+                        onAdd(pid, type, q, person, finalDate);
+                      }
+                      setQty("");
+                      setPerson("");
+                    }
+                  }}
+                  className="flex-[2] bg-blue-600 text-white p-3 rounded-lg text-xs font-bold"
+                 >
+                    {editingId ? "SAVE CHANGES" : "RECORD MOVE"}
+                 </button>
+              </div>
+           </div>
         </Card>
       </div>
     </div>
@@ -849,9 +990,12 @@ function ProductSetup({ products, onAdd }: { products: Product[], onAdd: (name: 
   );
 }
 
-function Card({ children, title, className }: { children: React.ReactNode, title?: string, className?: string }) {
+function Card({ children, title, className, onClick }: { children: React.ReactNode, title?: string, className?: string, onClick?: () => void }) {
   return (
-    <div className={cn("p-6 rounded-3xl bg-white border border-gray-100 shadow-sm transition-all hover:shadow-md", className)}>
+    <div 
+      onClick={onClick}
+      className={cn("p-6 rounded-3xl bg-white border border-gray-100 shadow-sm transition-all hover:shadow-md", className)}
+    >
       {title && <h4 className="text-sm font-medium text-gray-400 uppercase tracking-widest mb-6 italic">{title}</h4>}
       {children}
     </div>
